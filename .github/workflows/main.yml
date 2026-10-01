@@ -6,6 +6,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Checkout Code
@@ -14,39 +15,56 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 20
 
       - name: Setup Java JDK
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: '21'
+          java-version: '17'
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Project Dependencies
+      - name: Install Dependencies
         run: |
           npm install --legacy-peer-deps
 
-      - name: Build Web Production Assets
+      - name: Build Web App
         run: |
           npm run build
 
-      - name: Setup Capacitor and Android
+      - name: Install Capacitor CLI & Core
         run: |
-          npm install --save-dev @capacitor/cli @capacitor/core @capacitor/android --legacy-peer-deps
-          npx cap init "ખરીદ વાઉચર" "com.kaleshwari.kharidvoucher" --web-dir dist
+          npm install --save-dev @capacitor/cli@latest @capacitor/core@latest @capacitor/android@latest --legacy-peer-deps
+
+      - name: Write capacitor.config.json directly
+        run: |
+          cat << 'EOF' > capacitor.config.json
+          {
+            "appId": "com.kaleshwari.kharidvoucher",
+            "appName": "ખરીદ વાઉચર",
+            "webDir": "dist"
+          }
+          EOF
+
+      - name: Add Android Platform Non-Interactive
+        run: |
           npx cap add android
 
-      - name: Build APK via Gradle
+      - name: Sync Capacitor
+        run: |
+          npx cap sync android
+
+      - name: Build Debug APK
         run: |
           cd android
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon
 
-      - name: Upload APK Artifact
+      - name: Upload APK File
         uses: actions/upload-artifact@v4
         with:
-          name: kharid-voucher-apk
+          name: kharid-voucher-debug-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
