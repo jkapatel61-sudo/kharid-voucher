@@ -1,0 +1,42 @@
+{
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "name": "\u0a96\u0ab0\u0ac0\u0aa6 \u0ab5\u0abe\u0a89\u0a9a\u0ab0 - APMC Mandi",
+  "short_name": "\u0a96\u0ab0\u0ac0\u0aa6 \u0ab5\u0abe\u0a89\u0a9a\u0ab0",
+  "description": "APMC Mandi \u0a96\u0ab0\u0ac0\u0aa6 \u0ab5\u0abe\u0a89\u0a9a\u0ab0, \u0aae\u0abe\u0ab2 \u0aaa\u0aa4\u0acd\u0ab0\u0a95 \u0a85\u0aa8\u0ac7 \u0aac\u0acd\u0ab2\u0ac2\u0a9f\u0ac2\u0aa5 \u0aa5\u0ab0\u0acd\u0aae\u0ab2 \u0aaa\u0acd\u0ab0\u0abf\u0aa8\u0acd\u0a9f\u0ab0 \u0a8f\u0aaa",
+  "display": "standalone",
+  "display_override": [
+    "standalone",
+    "window-controls-overlay"
+  ],
+  "orientation": "portrait",
+  "theme_color": "#ffffff",
+  "background_color": "#f8fafc",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "512x512 192x192 any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon.svg",
+      "sizes": "512x512 192x192 any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

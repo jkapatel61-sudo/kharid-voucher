@@ -1,0 +1,181 @@
+{
+  "entities": {
+    "VoucherBill": {
+      "title": "VoucherBill",
+      "description": "APMC Mandi voucher bill record",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "billNo": {
+          "type": "number"
+        },
+        "billNoStr": {
+          "type": "string"
+        },
+        "date": {
+          "type": "string"
+        },
+        "time": {
+          "type": "string"
+        },
+        "session": {
+          "type": "string"
+        },
+        "customerName": {
+          "type": "string"
+        },
+        "totalWeightKg": {
+          "type": "number"
+        },
+        "totalWeightMan": {
+          "type": "number"
+        },
+        "grossAmount": {
+          "type": "number"
+        },
+        "discountLess": {
+          "type": "number"
+        },
+        "finalTotal": {
+          "type": "number"
+        },
+        "createdAt": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "id",
+        "billNoStr",
+        "date",
+        "customerName",
+        "finalTotal",
+        "createdAt"
+      ]
+    },
+    "KantaWeighment": {
+      "title": "KantaWeighment",
+      "description": "Electronic weighing scale entry record",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "date": {
+          "type": "string"
+        },
+        "time": {
+          "type": "string"
+        },
+        "customerName": {
+          "type": "string"
+        },
+        "productName": {
+          "type": "string"
+        },
+        "totalWeightKg": {
+          "type": "number"
+        },
+        "status": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "id",
+        "date",
+        "customerName",
+        "totalWeightKg",
+        "status",
+        "createdAt"
+      ]
+    },
+    "PrintJob": {
+      "title": "PrintJob",
+      "description": "Cloud remote print job queue item for office auto-print station",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "number"
+        },
+        "sourceDevice": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "title",
+        "status",
+        "createdAt"
+      ]
+    },
+    "ShopAccount": {
+      "title": "ShopAccount",
+      "description": "APMC Mandi shop mobile account for multi-device sync",
+      "type": "object",
+      "properties": {
+        "phoneNumber": {
+          "type": "string"
+        },
+        "shopName": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "number"
+        },
+        "lastOtp": {
+          "type": "string"
+        },
+        "lastOtpCreatedAt": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "phoneNumber",
+        "shopName"
+      ]
+    }
+  },
+  "firestore": {
+    "/mandi_bills/{billId}": {
+      "schema": {
+        "$ref": "#/entities/VoucherBill"
+      },
+      "description": "Mandi purchase voucher bills"
+    },
+    "/kanta_weighments/{weighmentId}": {
+      "schema": {
+        "$ref": "#/entities/KantaWeighment"
+      },
+      "description": "Weighing bridge entries from outside table"
+    },
+    "/mandi_print_jobs/{jobId}": {
+      "schema": {
+        "$ref": "#/entities/PrintJob"
+      },
+      "description": "Cloud print queue jobs for office auto-print station"
+    },
+    "/mandi_shop_accounts/{phoneNumber}": {
+      "schema": {
+        "$ref": "#/entities/ShopAccount"
+      },
+      "description": "Mandi merchant shop accounts mapped to verified mobile number"
+    }
+  }
+}

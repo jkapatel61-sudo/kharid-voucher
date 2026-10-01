@@ -1,0 +1,108 @@
+@import "tailwindcss";
+
+/* Application Light Steel Slate Theme (કાયમી લાઇટ સ્ટીલ સ્લેટ લુક) */
+:root, html, body {
+  --color-emerald-50: #f7f9fb;
+  --color-emerald-100: #ecf1f6;
+  --color-emerald-200: #dce5ee;
+  --color-emerald-300: #c1d0de;
+  --color-emerald-400: #9ab0c5;
+  --color-emerald-500: #718aa3;
+  --color-emerald-600: #5c758e;
+  --color-emerald-700: #4a627a;
+  --color-emerald-800: #3d5166;
+  --color-emerald-900: #2d3d4d;
+  --color-emerald-950: #1d2732;
+}
+
+@layer base {
+  /* Fix Android Fullscreen virtual keyboard black bar / backdrop bug */
+  :fullscreen,
+  ::backdrop,
+  html:fullscreen,
+  body:fullscreen,
+  #root:fullscreen,
+  html,
+  body,
+  #root {
+    background-color: #f8fafc !important;
+    color-scheme: light !important;
+  }
+
+  html, body {
+    overscroll-behavior-y: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    font-family: 'Noto Sans Gujarati', 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  }
+
+  /* Support for Android Camera Punch Hole, Notch, and Status Bar (Safe Area) */
+  :root {
+    --safe-top: env(safe-area-inset-top, 0px);
+  }
+
+  .safe-camera-top {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+
+  @media all and (display-mode: standalone), (display-mode: fullscreen) {
+    .safe-camera-top {
+      padding-top: max(env(safe-area-inset-top, 0px), 32px) !important;
+    }
+  }
+
+  /* Suppress WebKit search cancel buttons and decorations across entire app */
+  input[type="search"]::-webkit-search-cancel-button,
+  input[type="search"]::-webkit-search-decoration,
+  input[type="search"]::-webkit-search-results-button,
+  input[type="search"]::-webkit-search-results-decoration {
+    -webkit-appearance: none;
+    display: none;
+  }
+}
+
+@media print {
+  body {
+    background: white !important;
+    color: black !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+
+  .print-only {
+    display: block !important;
+  }
+
+  /* Thermal Receipt Specific Page Setup */
+  @page {
+    margin: 0;
+    size: auto;
+  }
+
+  #thermal-print-area,
+  #thermal-receipt-printable {
+    width: 58mm !important;
+    max-width: 58mm !important;
+    margin: 0 auto !important;
+    padding: 0 1mm !important;
+    font-size: 11px !important;
+    line-height: 1.25 !important;
+    color: black !important;
+    background: white !important;
+    box-shadow: none !important;
+    border: none !important;
+  }
+
+  #thermal-print-area.wide-80mm {
+    width: 80mm !important;
+    max-width: 80mm !important;
+  }
+}
+
+

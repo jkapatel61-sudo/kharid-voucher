@@ -1,0 +1,6 @@
+{
+  "name": "ખરીદ વાઉચર",
+  "description": "સીધું આજનું બિલ પેજ, ભાવવાર માલ પત્રક, સવાર/બપોરની મજૂરી હિસાબ, થર્મલ પ્રિન્ટ, દૈનિક રિપોર્ટ અને Google Drive બેકઅપ",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
