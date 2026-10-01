@@ -14,49 +14,38 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Setup Java JDK
         uses: actions/setup-java@v4
         with:
-          distribution: 'zulu'
-          java-version: '17'
+          distribution: 'temurin'
+          java-version: '21'
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Dependencies
-        run: npm install
-
-      - name: Build Web App
-        run: npm run build
-
-      - name: Install Capacitor
-        run: npm install --save-dev @capacitor/cli @capacitor/core @capacitor/android
-
-      - name: Setup Config
+      - name: Install Project Dependencies
         run: |
-          cat << 'EOF' > capacitor.config.json
-          {
-            "appId": "com.kaleshwari.kharidvoucher",
-            "appName": "ખરીદ વાઉચર",
-            "webDir": "dist",
-            "bundledWebRuntime": false
-          }
-          EOF
+          npm install --legacy-peer-deps
 
-      - name: Add Android Platform
+      - name: Build Web Production Assets
         run: |
+          npm run build
+
+      - name: Setup Capacitor and Android
+        run: |
+          npm install --save-dev @capacitor/cli @capacitor/core @capacitor/android --legacy-peer-deps
+          npx cap init "ખરીદ વાઉચર" "com.kaleshwari.kharidvoucher" --web-dir dist
           npx cap add android
-          npx cap sync android
 
-      - name: Build Debug APK
+      - name: Build APK via Gradle
         run: |
           cd android
           chmod +x gradlew
-          ./gradlew assembleDebug
+          ./gradlew assembleDebug --no-daemon
 
-      - name: Upload APK
+      - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: kharid-voucher-apk
