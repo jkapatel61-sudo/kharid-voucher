@@ -1,12 +1,17 @@
 name: Build Android APK
 
 on:
+  push:
+    branches: [ "main" ]
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
 
     steps:
       - name: Checkout Code
@@ -16,6 +21,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: 'npm'
 
       - name: Setup Java JDK
         uses: actions/setup-java@v4
@@ -23,48 +29,49 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Accept Android SDK Licenses
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
 
       - name: Install Dependencies
-        run: |
-          npm install --legacy-peer-deps
+        run: npm ci || npm install --legacy-peer-deps
 
-      - name: Build Web App
-        run: |
-          npm run build
+      - name: Build Web Production Assets
+        run: npm run build
 
-      - name: Install Capacitor CLI & Core
+      - name: Install Capacitor
         run: |
           npm install --save-dev @capacitor/cli@latest @capacitor/core@latest @capacitor/android@latest --legacy-peer-deps
 
-      - name: Write capacitor.config.json directly
+      - name: Initialize Capacitor Config
         run: |
-          cat << 'EOF' > capacitor.config.json
+          cat << 'CONF' > capacitor.config.json
           {
             "appId": "com.kaleshwari.kharidvoucher",
             "appName": "ખરીદ વાઉચર",
-            "webDir": "dist"
+            "webDir": "dist",
+            "bundledWebRuntime": false
           }
-          EOF
+          CONF
 
-      - name: Add Android Platform Non-Interactive
+      - name: Add Android Platform & Sync
         run: |
           npx cap add android
-
-      - name: Sync Capacitor
-        run: |
           npx cap sync android
 
       - name: Build Debug APK
         run: |
           cd android
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon
+          ./gradlew assembleDebug --no-daemon --stacktrace
 
-      - name: Upload APK File
+      - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: kharid-voucher-debug-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+          retention-days: 30
