@@ -1,4 +1,4 @@
-name: Build Android APK (TWA)
+name: Build Android APK
 
 on:
   push:
@@ -8,15 +8,21 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     env:
       ANDROID_HOME: /usr/local/lib/android/sdk
       ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
       JAVA_TOOL_OPTIONS: "-Dfile.encoding=UTF-8"
+      GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx3072m -XX:MaxMetaspaceSize=512m -Dfile.encoding=UTF-8"
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
 
       - name: Setup Java JDK 21
         uses: actions/setup-java@v5
@@ -27,146 +33,53 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Accept Android SDK Licenses
+      - name: Install Android Platforms & Licenses
         run: |
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-34" "platforms;android-35" "build-tools;34.0.0" "build-tools;35.0.0" || true
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
 
-      - name: Create TWA Android Project
+      - name: Install Project Dependencies
         run: |
-          mkdir -p twa-app/app/src/main/res/values
-          mkdir -p twa-app/app/src/main/res/mipmap-xxxhdpi
-          mkdir -p twa-app/gradle/wrapper
+          npm install --legacy-peer-deps
 
-          cat << 'CONF' > twa-app/settings.gradle
-          pluginManagement {
-              repositories {
-                  google()
-                  mavenCentral()
-                  gradlePluginPortal()
-              }
-          }
-          dependencyResolutionManagement {
-              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
-              repositories {
-                  google()
-                  mavenCentral()
-              }
-          }
-          rootProject.name = "KharidVoucher"
-          include ':app'
-          CONF
-
-          cat << 'CONF' > twa-app/build.gradle
-          plugins {
-              id 'com.android.application' version '8.5.2' apply false
-          }
-          CONF
-
-          cat << 'CONF' > twa-app/app/build.gradle
-          plugins {
-              id 'com.android.application'
-          }
-
-          android {
-              namespace 'com.kaleshwari.kharidvoucher'
-              compileSdk 34
-
-              defaultConfig {
-                  applicationId "com.kaleshwari.kharidvoucher"
-                  minSdk 21
-                  targetSdk 34
-                  versionCode 1
-                  versionName "1.0"
-              }
-
-              buildTypes {
-                  release {
-                      minifyEnabled false
-                  }
-                  debug {
-                      applicationIdSuffix ""
-                      debuggable true
-                  }
-              }
-
-              compileOptions {
-                  sourceCompatibility JavaVersion.VERSION_17
-                  targetCompatibility JavaVersion.VERSION_17
-              }
-          }
-
-          dependencies {
-              implementation 'androidx.appcompat:appcompat:1.7.0'
-              implementation 'com.google.android.material:material:1.12.0'
-              implementation 'com.google.androidbrowserhelper:androidbrowserhelper:2.5.0'
-          }
-          CONF
-
-          cat << 'CONF' > twa-app/app/src/main/res/values/strings.xml
-          <resources>
-              <string name="app_name">ખરીદ વાઉચર</string>
-          </resources>
-          CONF
-
-          cat << 'CONF' > twa-app/app/src/main/res/values/colors.xml
-          <resources>
-              <color name="colorPrimary">#047857</color>
-              <color name="colorPrimaryDark">#065f46</color>
-          </resources>
-          CONF
-
-          cat << 'CONF' > twa-app/app/src/main/res/values/styles.xml
-          <resources>
-              <style name="Theme.LauncherActivity" parent="Theme.MaterialComponents.Light.NoActionBar">
-                  <item name="android:statusBarColor">@color/colorPrimary</item>
-                  <item name="android:navigationBarColor">@color/colorPrimaryDark</item>
-              </style>
-          </resources>
-          CONF
-
-          cat << 'CONF' > twa-app/app/src/main/AndroidManifest.xml
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-
-              <uses-permission android:name="android.permission.RECORD_AUDIO" />
-              <uses-permission android:name="android.permission.BLUETOOTH" />
-              <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
-              <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
-              <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
-              <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
-
-              <application
-                  android:allowBackup="true"
-                  android:label="@string/app_name"
-                  android:theme="@style/Theme.LauncherActivity"
-                  android:supportsRtl="true">
-
-                  <activity
-                      android:name="com.google.androidbrowserhelper.trusted.LauncherActivity"
-                      android:exported="true"
-                      android:theme="@style/Theme.LauncherActivity">
-
-                      <meta-data
-                          android:name="android.support.customtabs.trusted.DEFAULT_URL"
-                          android:value="https://ais-dev-2l2vgmeymtyr6npijtpd76-34078812998.asia-southeast1.run.app" />
-
-                      <intent-filter>
-                          <action android:name="android.intent.action.MAIN" />
-                          <category android:name="android.intent.category.LAUNCHER" />
-                      </intent-filter>
-
-                  </activity>
-              </application>
-          </manifest>
-          CONF
-
-          if [ -f public/icon-192.png ]; then
-              cp public/icon-192.png twa-app/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
-          fi
-
-      - name: Build TWA Debug APK
+      - name: Build Web Production Bundle
         run: |
-          cd twa-app
-          gradle wrapper --gradle-version 8.7
+          npm run build
+
+      - name: Install Capacitor
+        run: |
+          npm install --save-dev @capacitor/cli @capacitor/core @capacitor/android @capacitor/app --legacy-peer-deps
+
+      - name: Initialize Capacitor Config
+        run: |
+          cat << 'CONF' > capacitor.config.json
+          {
+            "appId": "com.kaleshwari.kharidvoucher",
+            "appName": "Kharid Voucher",
+            "webDir": "dist",
+            "server": {
+              "url": "https://ais-dev-2l2vgmeymtyr6npijtpd76-34078812998.asia-southeast1.run.app",
+              "cleartext": true
+            }
+          }
+          CONF
+
+      - name: Add Android Platform
+        run: |
+          npx cap add android
+
+      - name: Add Android Permissions
+        run: |
+          sed -i '/<application/i \    <uses-permission android:name="android.permission.RECORD_AUDIO" />\\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />\\n    <uses-permission android:name="android.permission.BLUETOOTH" />\\n    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />\\n    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />\\n    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />\\n    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />' android/app/src/main/AndroidManifest.xml
+
+      - name: Sync Web Assets to Android
+        run: |
+          npx cap sync android
+
+      - name: Build Debug APK
+        run: |
+          cd android
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon --stacktrace
 
@@ -174,6 +87,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: kharid-voucher-debug-apk
-          path: twa-app/app/build/outputs/apk/debug/app-debug.apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 30
