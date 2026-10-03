@@ -20,7 +20,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Setup Java JDK
         uses: actions/setup-java@v4
@@ -42,7 +42,7 @@ jobs:
 
       - name: Install Capacitor CLI & Core
         run: |
-          npm install --save-dev @capacitor/cli@latest @capacitor/core@latest @capacitor/android@latest --legacy-peer-deps
+          npm install --save-dev @capacitor/cli @capacitor/core @capacitor/android --legacy-peer-deps
 
       - name: Initialize Capacitor Config
         run: |
