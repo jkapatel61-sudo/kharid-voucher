@@ -25,7 +25,7 @@ jobs:
           node-version: 22
 
       - name: Setup Java JDK 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: 'temurin'
           java-version: '21'
@@ -47,9 +47,9 @@ jobs:
         run: |
           npm run build
 
-      - name: Install Capacitor
+      - name: Install Capacitor & Native Plugins
         run: |
-          npm install --save-dev @capacitor/cli @capacitor/core @capacitor/android --legacy-peer-deps
+          npm install --save-dev @capacitor/cli @capacitor/core @capacitor/android @capacitor/app --legacy-peer-deps
 
       - name: Initialize Capacitor Config
         run: |
@@ -64,6 +64,44 @@ jobs:
       - name: Add Android Platform
         run: |
           npx cap add android
+
+      - name: Configure Android Permissions & Mic
+        run: |
+          sed -i '/<application/i \    <uses-permission android:name="android.permission.RECORD_AUDIO" />\\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />\\n    <uses-permission android:name="android.permission.BLUETOOTH" />\\n    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />\\n    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />\\n    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />\\n    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />' android/app/src/main/AndroidManifest.xml
+          
+          cat << 'JAVA' > android/app/src/main/java/com/kaleshwari/kharidvoucher/MainActivity.java
+          package com.kaleshwari.kharidvoucher;
+
+          import android.os.Bundle;
+          import android.webkit.PermissionRequest;
+          import android.webkit.WebChromeClient;
+          import com.getcapacitor.BridgeActivity;
+
+          public class MainActivity extends BridgeActivity {
+              @Override
+              public void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+              }
+
+              @Override
+              public void onResume() {
+                  super.onResume();
+                  if (this.bridge != null && this.bridge.getWebView() != null) {
+                      this.bridge.getWebView().setWebChromeClient(new WebChromeClient() {
+                          @Override
+                          public void onPermissionRequest(final PermissionRequest request) {
+                              MainActivity.this.runOnUiThread(new Runnable() {
+                                  @Override
+                                  public void run() {
+                                      request.grant(request.getResources());
+                                  }
+                              });
+                          }
+                      });
+                  }
+              }
+          }
+          JAVA
 
       - name: Sync Web Assets to Android
         run: |
