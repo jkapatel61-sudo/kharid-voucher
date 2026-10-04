@@ -44,7 +44,7 @@ jobs:
           python3 - << 'PY'
           import os
 
-          # 1. Patch Header.tsx: Only check real isBluetoothConnected() so light is RED when OFF and BLUE when ON
+          # 1. Patch Header.tsx: Instant native event listener for Blue/Red LED light
           if os.path.exists('src/components/Header.tsx'):
               with open('src/components/Header.tsx', 'r', encoding='utf-8') as f:
                   h = f.read()
@@ -54,13 +54,25 @@ jobs:
                   new_s = target_s + """
             const [isPrinterOnline, setIsPrinterOnline] = useState<boolean>(() => isBluetoothConnected());
             useEffect(() => {
+              const handleNativeEvent = (e: any) => {
+                if (e?.detail && typeof e.detail.connected === 'boolean') {
+                  setIsPrinterOnline(e.detail.connected);
+                } else {
+                  setIsPrinterOnline(isBluetoothConnected());
+                }
+              };
+              window.addEventListener('printerConnectionChanged', handleNativeEvent);
               const unsub = subscribeBluetoothStatus((connected) => {
                 setIsPrinterOnline(connected);
               });
               const interval = setInterval(() => {
                 setIsPrinterOnline(isBluetoothConnected());
-              }, 1500);
-              return () => { unsub(); clearInterval(interval); };
+              }, 600);
+              return () => {
+                window.removeEventListener('printerConnectionChanged', handleNativeEvent);
+                unsub();
+                clearInterval(interval);
+              };
             }, []);
           """
                   h = h.replace(target_s, new_s)
@@ -78,7 +90,7 @@ jobs:
                       f.write(h)
                   print("Patched Header.tsx for real-time Blue/Red light")
 
-          # 2. Patch bluetoothPrinter.ts: Exact 1cm space (y += 24) + Real bridge.isConnected check
+          # 2. Patch bluetoothPrinter.ts: Exact 1cm space (y += 24) + Synchronous Android Print with real feedback
           if os.path.exists('src/utils/bluetoothPrinter.ts'):
               with open('src/utils/bluetoothPrinter.ts', 'r', encoding='utf-8') as f:
                   bp = f.read()
@@ -139,9 +151,12 @@ jobs:
           import android.content.Context;
           import android.graphics.Bitmap;
           import android.graphics.BitmapFactory;
+          import android.os.Handler;
+          import android.os.Looper;
           import android.util.Base64;
           import android.util.Log;
           import android.webkit.JavascriptInterface;
+          import android.webkit.WebView;
           import android.widget.Toast;
 
           import java.io.ByteArrayOutputStream;
@@ -153,25 +168,40 @@ jobs:
               private static final String TAG = "AndroidPrinterBridge";
               private static final UUID SPP_UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB");
               private final Context context;
+              private final WebView webView;
               private static final Object PRINT_LOCK = new Object();
 
-              // Persistent Socket & Stream: connects once, stays connected
+              // Persistent Socket & Stream for instant consecutive printing
               private static BluetoothSocket sSocket = null;
               private static OutputStream sOut = null;
+              private static boolean isSocketConnected = false;
 
-              public AndroidPrinterBridge(Context context) {
+              public AndroidPrinterBridge(Context context, WebView webView) {
                   this.context = context;
+                  this.webView = webView;
+              }
+
+              public static void updateConnectionStatus(final WebView webView, final boolean connected) {
+                  isSocketConnected = connected;
+                  if (webView != null) {
+                      new Handler(Looper.getMainLooper()).post(new Runnable() {
+                          @Override
+                          public void run() {
+                              try {
+                                  webView.evaluateJavascript(
+                                      "window.dispatchEvent(new CustomEvent('printerConnectionChanged', { detail: { connected: " + connected + " } }));",
+                                      null
+                                  );
+                              } catch (Exception ignored) {}
+                          }
+                      });
+                  }
               }
 
               @JavascriptInterface
               public boolean isConnected() {
                   synchronized (PRINT_LOCK) {
-                      try {
-                          if (sSocket != null && sSocket.isConnected() && sOut != null) {
-                              return true;
-                          }
-                      } catch (Exception ignored) {}
-                      return false;
+                      return sSocket != null && sSocket.isConnected() && sOut != null;
                   }
               }
 
@@ -197,7 +227,8 @@ jobs:
                       @Override
                       public void run() {
                           synchronized (PRINT_LOCK) {
-                              ensureSocketConnected(true);
+                              boolean ok = ensureSocketConnected(true);
+                              updateConnectionStatus(webView, ok);
                           }
                       }
                   }).start();
@@ -207,7 +238,6 @@ jobs:
               private boolean ensureSocketConnected(boolean showToast) {
                   try {
                       if (sSocket != null && sSocket.isConnected() && sOut != null) {
-                          if (showToast) showToast("✅ PSF588 પ્રિન્ટર જોડાયેલું છે!");
                           return true;
                       }
                   } catch (Exception ignored) {}
@@ -257,11 +287,13 @@ jobs:
                       sSocket = target.createRfcommSocketToServiceRecord(SPP_UUID);
                       sSocket.connect();
                       sOut = sSocket.getOutputStream();
+                      updateConnectionStatus(webView, true);
                       if (showToast) showToast("✅ PSF588 પ્રિન્ટર કનેક્ટ થઈ ગયું!");
                       return true;
                   } catch (Exception e) {
                       Log.e(TAG, "Connection failed", e);
                       closeSocketQuietly();
+                      updateConnectionStatus(webView, false);
                       if (showToast) showToast("PSF588 કનેક્ટ થઈ શક્યું નહીં. પ્રિન્ટર ચાલુ છે?");
                       return false;
                   }
@@ -276,6 +308,64 @@ jobs:
                   } catch (Exception ignored) {}
                   sOut = null;
                   sSocket = null;
+                  updateConnectionStatus(webView, false);
+              }
+
+              /**
+               * Synchronous print: blocks until all bytes are flushed out to the physical printer.
+               * Returns "SUCCESS" ONLY when printed, or "ERROR: ..." if printer is off or failed.
+               */
+              @JavascriptInterface
+              public String printSync(String base64Png) {
+                  synchronized (PRINT_LOCK) {
+                      try {
+                          if (!ensureSocketConnected(false)) {
+                              return "ERROR: પ્રિન્ટર કનેક્ટ નથી. પ્રિન્ટર ચાલુ કરો.";
+                          }
+
+                          byte[] decoded = Base64.decode(base64Png, Base64.DEFAULT);
+                          Bitmap bitmap = BitmapFactory.decodeByteArray(decoded, 0, decoded.length);
+                          if (bitmap == null) return "ERROR: બિલ ઇમેજ બની શકી નહીં.";
+
+                          // 1. Hardware Clear: ESC @ resets printer RAM
+                          sOut.write(new byte[]{0x1B, 0x40});
+                          Thread.sleep(40);
+
+                          // 2. Alignment Center: ESC a 1
+                          sOut.write(new byte[]{0x1B, 0x61, 0x01});
+                          sOut.flush();
+
+                          // 3. Raster Data Stream
+                          byte[] raster = bitmapToEscPosRaster(bitmap);
+
+                          int PREROLL_BYTES = Math.min(raster.length, 1152);
+                          if (PREROLL_BYTES > 0) {
+                              sOut.write(raster, 0, PREROLL_BYTES);
+                              sOut.flush();
+                          }
+
+                          int BATCH_BYTES = 384;
+                          for (int offset = PREROLL_BYTES; offset < raster.length; offset += BATCH_BYTES) {
+                              int len = Math.min(BATCH_BYTES, raster.length - offset);
+                              sOut.write(raster, offset, len);
+                              sOut.flush();
+                              Thread.sleep(7);
+                          }
+
+                          // 4. Exact 1 cm Bottom Space: Feed 1 line + LF (ESC d 1)
+                          sOut.write(new byte[]{0x1B, 0x64, 0x01, 0x0A});
+                          sOut.flush();
+
+                          showToast("પ્રિન્ટ સફળ!");
+                          updateConnectionStatus(webView, true);
+                          return "SUCCESS";
+
+                      } catch (Exception e) {
+                          Log.e(TAG, "Print error", e);
+                          closeSocketQuietly();
+                          return "ERROR: " + (e.getMessage() != null ? e.getMessage() : "પ્રિન્ટર એરર");
+                      }
+                  }
               }
 
               @JavascriptInterface
@@ -283,71 +373,9 @@ jobs:
                   new Thread(new Runnable() {
                       @Override
                       public void run() {
-                          synchronized (PRINT_LOCK) {
-                              printInternal(base64Png, false);
-                          }
+                          printSync(base64Png);
                       }
                   }).start();
-              }
-
-              private void printInternal(String base64Png, boolean isRetry) {
-                  try {
-                      if (!ensureSocketConnected(!isRetry)) {
-                          return;
-                      }
-
-                      byte[] decoded = Base64.decode(base64Png, Base64.DEFAULT);
-                      Bitmap bitmap = BitmapFactory.decodeByteArray(decoded, 0, decoded.length);
-                      if (bitmap == null) return;
-
-                      // 1. Hardware Clear & Reset: ESC @ resets printer RAM to prevent corrupted characters on Bill 2, 3...
-                      sOut.write(new byte[]{0x1B, 0x40});
-                      Thread.sleep(40);
-
-                      // 2. Alignment Center: ESC a 1
-                      sOut.write(new byte[]{0x1B, 0x61, 0x01});
-                      sOut.flush();
-
-                      // 3. Raster Data Stream
-                      byte[] raster = bitmapToEscPosRaster(bitmap);
-
-                      int PREROLL_BYTES = Math.min(raster.length, 1152);
-                      if (PREROLL_BYTES > 0) {
-                          outWriteSafe(raster, 0, PREROLL_BYTES);
-                      }
-
-                      int BATCH_BYTES = 384;
-                      for (int offset = PREROLL_BYTES; offset < raster.length; offset += BATCH_BYTES) {
-                          int len = Math.min(BATCH_BYTES, raster.length - offset);
-                          outWriteSafe(raster, offset, len);
-                          Thread.sleep(7);
-                      }
-
-                      // 4. Exact 1 cm Bottom Space: Feed 1 line + LF (ESC d 1)
-                      sOut.write(new byte[]{0x1B, 0x64, 0x01, 0x0A});
-                      sOut.flush();
-
-                      showToast("પ્રિન્ટ સફળ!");
-
-                  } catch (Exception e) {
-                      Log.e(TAG, "Print error, retrying with fresh socket...", e);
-                      closeSocketQuietly();
-                      if (!isRetry) {
-                          try {
-                              Thread.sleep(300);
-                          } catch (Exception ignored) {}
-                          printInternal(base64Png, true);
-                      } else {
-                          showToast("પ્રિન્ટરમાં એરર: " + e.getMessage());
-                      }
-                  }
-              }
-
-              private void outWriteSafe(byte[] data, int off, int len) throws Exception {
-                  if (sOut != null) {
-                      sOut.write(data, off, len);
-                      sOut.flush();
-                  }
               }
 
               private byte[] bitmapToEscPosRaster(Bitmap bitmap) {
@@ -389,7 +417,7 @@ jobs:
 
               private void showToast(final String msg) {
                   if (context == null) return;
-                  new android.os.Handler(android.os.Looper.getMainLooper()).post(new Runnable() {
+                  new Handler(Looper.getMainLooper()).post(new Runnable() {
                       @Override
                       public void run() {
                           Toast.makeText(context, msg, Toast.LENGTH_SHORT).show();
@@ -403,6 +431,12 @@ jobs:
           package com.kaleshwari.kharidvoucher;
 
           import android.Manifest;
+          import android.bluetooth.BluetoothAdapter;
+          import android.bluetooth.BluetoothDevice;
+          import android.content.BroadcastReceiver;
+          import android.content.Context;
+          import android.content.Intent;
+          import android.content.IntentFilter;
           import android.content.pm.PackageManager;
           import android.os.Build;
           import android.os.Bundle;
@@ -414,11 +448,13 @@ jobs:
 
           public class MainActivity extends BridgeActivity {
               private static final int PERMISSION_REQ_CODE = 101;
+              private BroadcastReceiver btReceiver = null;
 
               @Override
               public void onCreate(Bundle savedInstanceState) {
                   super.onCreate(savedInstanceState);
                   requestAppPermissions();
+                  setupBluetoothStateReceiver();
               }
 
               private void requestAppPermissions() {
@@ -439,11 +475,48 @@ jobs:
                   }
               }
 
+              private void setupBluetoothStateReceiver() {
+                  btReceiver = new BroadcastReceiver() {
+                      @Override
+                      public void onReceive(Context context, Intent intent) {
+                          String action = intent.getAction();
+                          if (BluetoothDevice.ACTION_ACL_CONNECTED.equals(action)) {
+                              BluetoothDevice dev = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
+                              if (dev != null && isPrinterDevice(dev)) {
+                                  if (bridge != null && bridge.getWebView() != null) {
+                                      AndroidPrinterBridge.updateConnectionStatus(bridge.getWebView(), true);
+                                  }
+                              }
+                          } else if (BluetoothDevice.ACTION_ACL_DISCONNECTED.equals(action) ||
+                                     BluetoothAdapter.ACTION_STATE_CHANGED.equals(action)) {
+                              if (bridge != null && bridge.getWebView() != null) {
+                                  AndroidPrinterBridge.updateConnectionStatus(bridge.getWebView(), false);
+                              }
+                          }
+                      }
+                  };
+
+                  IntentFilter filter = new IntentFilter();
+                  filter.addAction(BluetoothDevice.ACTION_ACL_CONNECTED);
+                  filter.addAction(BluetoothDevice.ACTION_ACL_DISCONNECTED);
+                  filter.addAction(BluetoothAdapter.ACTION_STATE_CHANGED);
+                  registerReceiver(btReceiver, filter);
+              }
+
+              private boolean isPrinterDevice(BluetoothDevice dev) {
+                  try {
+                      String name = dev.getName() != null ? dev.getName().toUpperCase() : "";
+                      return name.contains("PSF588") || name.contains("PRINTER") || name.contains("POS") || name.contains("RPP") || name.contains("MPT");
+                  } catch (Exception e) {
+                      return true;
+                  }
+              }
+
               @Override
               public void onResume() {
                   super.onResume();
                   if (this.bridge != null && this.bridge.getWebView() != null) {
-                      this.bridge.getWebView().addJavascriptInterface(new AndroidPrinterBridge(this), "AndroidPrinter");
+                      this.bridge.getWebView().addJavascriptInterface(new AndroidPrinterBridge(this, this.bridge.getWebView()), "AndroidPrinter");
                       this.bridge.getWebView().setWebChromeClient(new WebChromeClient() {
                           @Override
                           public void onPermissionRequest(final PermissionRequest request) {
@@ -455,6 +528,16 @@ jobs:
                               });
                           }
                       });
+                  }
+              }
+
+              @Override
+              public void onDestroy() {
+                  super.onDestroy();
+                  if (btReceiver != null) {
+                      try {
+                          unregisterReceiver(btReceiver);
+                      } catch (Exception ignored) {}
                   }
               }
           }
