@@ -69,9 +69,208 @@ jobs:
         run: |
           npx cap add android
 
-      - name: Add Android Permissions
+      - name: Configure Native Android Bluetooth & Mic Bridge
         run: |
-          sed -i '/<application/i \    <uses-permission android:name="android.permission.RECORD_AUDIO" />\\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />\\n    <uses-permission android:name="android.permission.BLUETOOTH" />\\n    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />\\n    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />\\n    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />\\n    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />' android/app/src/main/AndroidManifest.xml
+          sed -i '/<application/i \    <uses-permission android:name="android.permission.RECORD_AUDIO" />\\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />\\n    <uses-permission android:name="android.permission.BLUETOOTH" />\\n    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />\\n    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />\\n    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />\\n    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />\\n    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />' android/app/src/main/AndroidManifest.xml
+
+          cat << 'JAVA' > android/app/src/main/java/com/kaleshwari/kharidvoucher/AndroidPrinterBridge.java
+          package com.kaleshwari.kharidvoucher;
+
+          import android.bluetooth.BluetoothAdapter;
+          import android.bluetooth.BluetoothDevice;
+          import android.bluetooth.BluetoothSocket;
+          import android.content.Context;
+          import android.graphics.Bitmap;
+          import android.graphics.BitmapFactory;
+          import android.util.Base64;
+          import android.util.Log;
+          import android.webkit.JavascriptInterface;
+          import android.widget.Toast;
+
+          import java.io.ByteArrayOutputStream;
+          import java.io.OutputStream;
+          import java.util.Set;
+          import java.util.UUID;
+
+          public class AndroidPrinterBridge {
+              private static final String TAG = "AndroidPrinterBridge";
+              private static final UUID SPP_UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB");
+              private final Context context;
+
+              public AndroidPrinterBridge(Context context) {
+                  this.context = context;
+              }
+
+              @JavascriptInterface
+              public boolean isConnected() {
+                  return true;
+              }
+
+              @JavascriptInterface
+              public void print(final String base64Png) {
+                  new Thread(new Runnable() {
+                      @Override
+                      public void run() {
+                          printInternal(base64Png);
+                      }
+                  }).start();
+              }
+
+              private void printInternal(String base64Png) {
+                  BluetoothSocket socket = null;
+                  OutputStream out = null;
+                  try {
+                      BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
+                      if (adapter == null || !adapter.isEnabled()) {
+                          showToast("કૃપા કરીને બ્લૂટૂથ ચાલુ કરો");
+                          return;
+                      }
+
+                      Set<BluetoothDevice> pairedDevices = adapter.getBondedDevices();
+                      BluetoothDevice printerDevice = null;
+
+                      for (BluetoothDevice device : pairedDevices) {
+                          if (device.getName() != null && device.getName().toUpperCase().contains("PSF588")) {
+                              printerDevice = device;
+                              break;
+                          }
+                      }
+
+                      if (printerDevice == null) {
+                          for (BluetoothDevice device : pairedDevices) {
+                              String name = device.getName() != null ? device.getName().toUpperCase() : "";
+                              if (name.contains("PRINTER") || name.contains("POS") || name.contains("RPP") || name.contains("MPT")) {
+                                  printerDevice = device;
+                                  break;
+                              }
+                          }
+                      }
+
+                      if (printerDevice == null && !pairedDevices.isEmpty()) {
+                          printerDevice = pairedDevices.iterator().next();
+                      }
+
+                      if (printerDevice == null) {
+                          showToast("મોબાઇલ સેટિંગ્સમાંથી PSF588 બ્લૂટૂથ પેર કરો");
+                          return;
+                      }
+
+                      byte[] decoded = Base64.decode(base64Png, Base64.DEFAULT);
+                      Bitmap bitmap = BitmapFactory.decodeByteArray(decoded, 0, decoded.length);
+                      if (bitmap == null) return;
+
+                      socket = printerDevice.createRfcommSocketToServiceRecord(SPP_UUID);
+                      socket.connect();
+                      out = socket.getOutputStream();
+
+                      out.write(new byte[]{0x1B, 0x40});
+                      out.write(new byte[]{0x1B, 0x61, 0x01});
+
+                      byte[] raster = bitmapToEscPosRaster(bitmap);
+                      out.write(raster);
+
+                      out.write(new byte[]{0x1B, 0x64, 0x03});
+                      out.flush();
+
+                      Thread.sleep(350);
+                      showToast("પ્રિન્ટ સફળ!");
+
+                  } catch (Exception e) {
+                      Log.e(TAG, "Print error", e);
+                      showToast("પ્રિન્ટરમાં મોકલવામાં એરર: " + e.getMessage());
+                  } finally {
+                      try {
+                          if (out != null) out.close();
+                      } catch (Exception ignored) {}
+                      try {
+                          if (socket != null) socket.close();
+                      } catch (Exception ignored) {}
+                  }
+              }
+
+              private byte[] bitmapToEscPosRaster(Bitmap bitmap) {
+                  int width = bitmap.getWidth();
+                  int height = bitmap.getHeight();
+                  int widthBytes = (width + 7) / 8;
+
+                  ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                  baos.write(0x1D);
+                  baos.write(0x76);
+                  baos.write(0x30);
+                  baos.write(0x00);
+                  baos.write(widthBytes & 0xFF);
+                  baos.write((widthBytes >> 8) & 0xFF);
+                  baos.write(height & 0xFF);
+                  baos.write((height >> 8) & 0xFF);
+
+                  for (int y = 0; y < height; y++) {
+                      for (int x = 0; x < widthBytes; x++) {
+                          byte b = 0;
+                          for (int bit = 0; bit < 8; bit++) {
+                              int px = (x * 8) + bit;
+                              if (px < width) {
+                                  int pixel = bitmap.getPixel(px, y);
+                                  int r = (pixel >> 16) & 0xFF;
+                                  int g = (pixel >> 8) & 0xFF;
+                                  int bl = pixel & 0xFF;
+                                  int luminance = (r * 299 + g * 587 + bl * 114) / 1000;
+                                  if (luminance < 160) {
+                                      b |= (1 << (7 - bit));
+                                  }
+                              }
+                          }
+                          baos.write(b);
+                      }
+                  }
+                  return baos.toByteArray();
+              }
+
+              private void showToast(final String msg) {
+                  if (context == null) return;
+                  new android.os.Handler(android.os.Looper.getMainLooper()).post(new Runnable() {
+                      @Override
+                      public void run() {
+                          Toast.makeText(context, msg, Toast.LENGTH_SHORT).show();
+                      }
+                  });
+              }
+          }
+          JAVA
+
+          cat << 'JAVA' > android/app/src/main/java/com/kaleshwari/kharidvoucher/MainActivity.java
+          package com.kaleshwari.kharidvoucher;
+
+          import android.os.Bundle;
+          import android.webkit.PermissionRequest;
+          import android.webkit.WebChromeClient;
+          import com.getcapacitor.BridgeActivity;
+
+          public class MainActivity extends BridgeActivity {
+              @Override
+              public void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+              }
+
+              @Override
+              public void onResume() {
+                  super.onResume();
+                  if (this.bridge != null && this.bridge.getWebView() != null) {
+                      this.bridge.getWebView().addJavascriptInterface(new AndroidPrinterBridge(this), "AndroidPrinter");
+                      this.bridge.getWebView().setWebChromeClient(new WebChromeClient() {
+                          @Override
+                          public void onPermissionRequest(final PermissionRequest request) {
+                              MainActivity.this.runOnUiThread(new Runnable() {
+                                  @Override
+                                  public void run() {
+                                      request.grant(request.getResources());
+                                  }
+                              });
+                          }
+                      });
+                  }
+              }
+          }
+          JAVA
 
       - name: Sync Web Assets to Android
         run: |
