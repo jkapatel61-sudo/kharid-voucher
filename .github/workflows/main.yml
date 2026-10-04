@@ -51,7 +51,7 @@ jobs:
         run: |
           npm install --save-dev @capacitor/cli @capacitor/core @capacitor/android @capacitor/app --legacy-peer-deps
 
-      - name: Initialize Pure Standalone Capacitor Config
+      - name: Initialize Capacitor Config
         run: |
           cat << 'CONF' > capacitor.config.json
           {
@@ -92,6 +92,7 @@ jobs:
               private static final String TAG = "AndroidPrinterBridge";
               private static final UUID SPP_UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB");
               private final Context context;
+              private static final Object PRINT_LOCK = new Object();
 
               public AndroidPrinterBridge(Context context) {
                   this.context = context;
@@ -107,7 +108,9 @@ jobs:
                   new Thread(new Runnable() {
                       @Override
                       public void run() {
-                          printInternal(base64Png);
+                          synchronized (PRINT_LOCK) {
+                              printInternal(base64Png);
+                          }
                       }
                   }).start();
               }
@@ -155,33 +158,64 @@ jobs:
                       Bitmap bitmap = BitmapFactory.decodeByteArray(decoded, 0, decoded.length);
                       if (bitmap == null) return;
 
+                      if (adapter.isDiscovering()) {
+                          adapter.cancelDiscovery();
+                      }
+
                       socket = printerDevice.createRfcommSocketToServiceRecord(SPP_UUID);
                       socket.connect();
                       out = socket.getOutputStream();
+                      Thread.sleep(150);
 
-                      out.write(new byte[]{0x1B, 0x40});
+                      out.write(new byte[]{0x18});
                       out.write(new byte[]{0x1B, 0x61, 0x01});
-
-                      byte[] raster = bitmapToEscPosRaster(bitmap);
-                      out.write(raster);
-
-                      out.write(new byte[]{0x1B, 0x64, 0x03});
                       out.flush();
 
-                      Thread.sleep(350);
+                      byte[] raster = bitmapToEscPosRaster(bitmap);
+
+                      int PREROLL_BYTES = Math.min(raster.length, 1152);
+                      if (PREROLL_BYTES > 0) {
+                          cachedOutWrite(out, raster, 0, PREROLL_BYTES);
+                      }
+
+                      int BATCH_BYTES = 384;
+                      for (int offset = PREROLL_BYTES; offset < raster.length; offset += BATCH_BYTES) {
+                          int len = Math.min(BATCH_BYTES, raster.length - offset);
+                          out.write(raster, offset, len);
+                          out.flush();
+                          Thread.sleep(7);
+                      }
+
+                      out.write(new byte[]{0x1B, 0x64, 0x03, 0x0A});
+                      out.flush();
+
+                      Thread.sleep(1000);
                       showToast("પ્રિન્ટ સફળ!");
 
                   } catch (Exception e) {
                       Log.e(TAG, "Print error", e);
-                      showToast("પ્રિન્ટરમાં મોકલવામાં એરર: " + e.getMessage());
+                      showToast("પ્રિન્ટરમાં એરર: " + e.getMessage());
                   } finally {
                       try {
-                          if (out != null) out.close();
+                          if (out != null) {
+                              out.flush();
+                              out.close();
+                          }
                       } catch (Exception ignored) {}
                       try {
-                          if (socket != null) socket.close();
+                          if (socket != null) {
+                              socket.close();
+                          }
+                      } catch (Exception ignored) {}
+                      try {
+                          Thread.sleep(200);
                       } catch (Exception ignored) {}
                   }
+              }
+
+              private void cachedOutWrite(OutputStream out, byte[] raster, int offset, int len) throws Exception {
+                  out.write(raster, offset, len);
+                  out.flush();
               }
 
               private byte[] bitmapToEscPosRaster(Bitmap bitmap) {
@@ -236,15 +270,41 @@ jobs:
           cat << 'JAVA' > android/app/src/main/java/com/kaleshwari/kharidvoucher/MainActivity.java
           package com.kaleshwari.kharidvoucher;
 
+          import android.Manifest;
+          import android.content.pm.PackageManager;
+          import android.os.Build;
           import android.os.Bundle;
           import android.webkit.PermissionRequest;
           import android.webkit.WebChromeClient;
+          import androidx.core.app.ActivityCompat;
+          import androidx.core.content.ContextCompat;
           import com.getcapacitor.BridgeActivity;
 
           public class MainActivity extends BridgeActivity {
+              private static final int PERMISSION_REQ_CODE = 101;
+
               @Override
               public void onCreate(Bundle savedInstanceState) {
                   super.onCreate(savedInstanceState);
+                  requestAppPermissions();
+              }
+
+              private void requestAppPermissions() {
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                      String[] permissions = {
+                          Manifest.permission.RECORD_AUDIO,
+                          Manifest.permission.BLUETOOTH_CONNECT,
+                          Manifest.permission.BLUETOOTH_SCAN,
+                          Manifest.permission.ACCESS_FINE_LOCATION
+                      };
+                      ActivityCompat.requestPermissions(this, permissions, PERMISSION_REQ_CODE);
+                  } else {
+                      String[] permissions = {
+                          Manifest.permission.RECORD_AUDIO,
+                          Manifest.permission.ACCESS_FINE_LOCATION
+                      };
+                      ActivityCompat.requestPermissions(this, permissions, PERMISSION_REQ_CODE);
+                  }
               }
 
               @Override
