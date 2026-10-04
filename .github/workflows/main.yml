@@ -175,7 +175,8 @@ jobs:
 
                       int PREROLL_BYTES = Math.min(raster.length, 1152);
                       if (PREROLL_BYTES > 0) {
-                          cachedOutWrite(out, raster, 0, PREROLL_BYTES);
+                          out.write(raster, 0, PREROLL_BYTES);
+                          out.flush();
                       }
 
                       int BATCH_BYTES = 384;
@@ -211,11 +212,6 @@ jobs:
                           Thread.sleep(200);
                       } catch (Exception ignored) {}
                   }
-              }
-
-              private void cachedOutWrite(OutputStream out, byte[] raster, int offset, int len) throws Exception {
-                  out.write(raster, offset, len);
-                  out.flush();
               }
 
               private byte[] bitmapToEscPosRaster(Bitmap bitmap) {
