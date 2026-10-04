@@ -51,17 +51,13 @@ jobs:
         run: |
           npm install --save-dev @capacitor/cli @capacitor/core @capacitor/android @capacitor/app --legacy-peer-deps
 
-      - name: Initialize Capacitor Config
+      - name: Initialize Pure Standalone Capacitor Config
         run: |
           cat << 'CONF' > capacitor.config.json
           {
             "appId": "com.kaleshwari.kharidvoucher",
             "appName": "Kharid Voucher",
-            "webDir": "dist",
-            "server": {
-              "url": "https://ais-dev-2l2vgmeymtyr6npijtpd76-34078812998.asia-southeast1.run.app",
-              "cleartext": true
-            }
+            "webDir": "dist"
           }
           CONF
 
