@@ -104,6 +104,22 @@ jobs:
               }
 
               @JavascriptInterface
+              public boolean hasPairedPrinter() {
+                  try {
+                      BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
+                      if (adapter == null || !adapter.isEnabled()) return false;
+                      Set<BluetoothDevice> pairedDevices = adapter.getBondedDevices();
+                      for (BluetoothDevice device : pairedDevices) {
+                          String name = device.getName() != null ? device.getName().toUpperCase() : "";
+                          if (name.contains("PSF588") || name.contains("PRINTER") || name.contains("POS") || name.contains("RPP") || name.contains("MPT")) {
+                              return true;
+                          }
+                      }
+                  } catch (Exception ignored) {}
+                  return false;
+              }
+
+              @JavascriptInterface
               public void print(final String base64Png) {
                   new Thread(new Runnable() {
                       @Override
