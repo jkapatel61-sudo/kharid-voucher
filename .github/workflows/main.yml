@@ -203,7 +203,7 @@ jobs:
                           Thread.sleep(7);
                       }
 
-                      out.write(new byte[]{0x1B, 0x64, 0x03, 0x0A});
+                      out.write(new byte[]{0x1B, 0x64, 0x01, 0x0A});
                       out.flush();
 
                       Thread.sleep(1000);
