@@ -39,29 +39,27 @@ jobs:
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-34" "platforms;android-35" "build-tools;34.0.0" "build-tools;35.0.0" || true
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
 
-      - name: Patch UI Lights, 1cm Margin & Unified Print
+      - name: Patch UI Lights, 1cm Margin & Real-time Connection
         run: |
           python3 - << 'PY'
           import os
 
-          # 1. Patch Header.tsx: Add pure Blue / Red LED Light (Zero text)
+          # 1. Patch Header.tsx: Only check real isBluetoothConnected() so light is RED when OFF and BLUE when ON
           if os.path.exists('src/components/Header.tsx'):
               with open('src/components/Header.tsx', 'r', encoding='utf-8') as f:
                   h = f.read()
               if 'isPrinterOnline' not in h:
-                  h = h.replace("import { FirmSettings } from '../types';", "import { FirmSettings } from '../types';\nimport { isBluetoothConnected, isPrinterConfiguredOrPermitted, subscribeBluetoothStatus } from '../utils/bluetoothPrinter';")
+                  h = h.replace("import { FirmSettings } from '../types';", "import { FirmSettings } from '../types';\nimport { isBluetoothConnected, subscribeBluetoothStatus } from '../utils/bluetoothPrinter';")
                   target_s = "const [isDrawerOpen, setIsDrawerOpen] = useState(false);"
                   new_s = target_s + """
-            const [isPrinterOnline, setIsPrinterOnline] = useState<boolean>(() => {
-              return isBluetoothConnected() || isPrinterConfiguredOrPermitted();
-            });
+            const [isPrinterOnline, setIsPrinterOnline] = useState<boolean>(() => isBluetoothConnected());
             useEffect(() => {
               const unsub = subscribeBluetoothStatus((connected) => {
-                setIsPrinterOnline(connected || isPrinterConfiguredOrPermitted());
+                setIsPrinterOnline(connected);
               });
               const interval = setInterval(() => {
-                setIsPrinterOnline(isBluetoothConnected() || isPrinterConfiguredOrPermitted());
-              }, 2000);
+                setIsPrinterOnline(isBluetoothConnected());
+              }, 1500);
               return () => { unsub(); clearInterval(interval); };
             }, []);
           """
@@ -78,16 +76,28 @@ jobs:
                   h = h.replace(act, badge)
                   with open('src/components/Header.tsx', 'w', encoding='utf-8') as f:
                       f.write(h)
-                  print("Patched Header.tsx with pure Blue/Red lights")
+                  print("Patched Header.tsx for real-time Blue/Red light")
 
-          # 2. Patch bluetoothPrinter.ts: Exact 1cm space (y += 24) + Native connect support
+          # 2. Patch bluetoothPrinter.ts: Exact 1cm space (y += 24) + Real bridge.isConnected check
           if os.path.exists('src/utils/bluetoothPrinter.ts'):
               with open('src/utils/bluetoothPrinter.ts', 'r', encoding='utf-8') as f:
                   bp = f.read()
               bp = bp.replace("y += 40;", "y += 24;")
+              old_is_bt = "export const isBluetoothConnected = (): boolean => {\n  return Boolean(activeGattServer && activeGattServer.connected);\n};"
+              new_is_bt = """export const isBluetoothConnected = (): boolean => {
+            if (typeof window !== 'undefined') {
+              const bridge = (window as any).AndroidPrinter || (window as any).AndroidBridge || (window as any).Android;
+              if (bridge && typeof bridge.isConnected === 'function') {
+                try { return Boolean(bridge.isConnected()); } catch { return false; }
+              }
+            }
+            return Boolean(activeGattServer && activeGattServer.connected);
+          };"""
+              if old_is_bt in bp:
+                  bp = bp.replace(old_is_bt, new_is_bt)
               with open('src/utils/bluetoothPrinter.ts', 'w', encoding='utf-8') as f:
                   f.write(bp)
-              print("Patched bluetoothPrinter.ts for 1cm space")
+              print("Patched bluetoothPrinter.ts for 1cm space and live bridge status")
           PY
 
       - name: Install Project Dependencies
@@ -145,7 +155,7 @@ jobs:
               private final Context context;
               private static final Object PRINT_LOCK = new Object();
 
-              // Persistent Socket & Stream for lightning-fast consecutive prints (Bill 1, 2, 3...)
+              // Persistent Socket & Stream: connects once, stays connected
               private static BluetoothSocket sSocket = null;
               private static OutputStream sOut = null;
 
@@ -156,7 +166,12 @@ jobs:
               @JavascriptInterface
               public boolean isConnected() {
                   synchronized (PRINT_LOCK) {
-                      return sSocket != null && sSocket.isConnected() && sOut != null;
+                      try {
+                          if (sSocket != null && sSocket.isConnected() && sOut != null) {
+                              return true;
+                          }
+                      } catch (Exception ignored) {}
+                      return false;
                   }
               }
 
@@ -182,23 +197,27 @@ jobs:
                       @Override
                       public void run() {
                           synchronized (PRINT_LOCK) {
-                              ensureSocketConnected();
+                              ensureSocketConnected(true);
                           }
                       }
                   }).start();
                   return true;
               }
 
-              private boolean ensureSocketConnected() {
-                  if (sSocket != null && sSocket.isConnected() && sOut != null) {
-                      return true;
-                  }
+              private boolean ensureSocketConnected(boolean showToast) {
+                  try {
+                      if (sSocket != null && sSocket.isConnected() && sOut != null) {
+                          if (showToast) showToast("✅ PSF588 પ્રિન્ટર જોડાયેલું છે!");
+                          return true;
+                      }
+                  } catch (Exception ignored) {}
+
                   closeSocketQuietly();
 
                   try {
                       BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
                       if (adapter == null || !adapter.isEnabled()) {
-                          showToast("કૃપા કરીને બ્લૂટૂથ ચાલુ કરો");
+                          if (showToast) showToast("કૃપા કરીને બ્લૂટૂથ ચાલુ કરો");
                           return false;
                       }
 
@@ -227,7 +246,7 @@ jobs:
                       }
 
                       if (target == null) {
-                          showToast("મોબાઇલ બ્લૂટૂથ સેટિંગ્સમાંથી PSF588 પેર કરો");
+                          if (showToast) showToast("મોબાઇલ બ્લૂટૂથ સેટિંગ્સમાંથી PSF588 પેર કરો");
                           return false;
                       }
 
@@ -238,12 +257,12 @@ jobs:
                       sSocket = target.createRfcommSocketToServiceRecord(SPP_UUID);
                       sSocket.connect();
                       sOut = sSocket.getOutputStream();
-                      showToast("✅ PSF588 પ્રિન્ટર કનેક્ટ થઈ ગયું!");
+                      if (showToast) showToast("✅ PSF588 પ્રિન્ટર કનેક્ટ થઈ ગયું!");
                       return true;
                   } catch (Exception e) {
                       Log.e(TAG, "Connection failed", e);
                       closeSocketQuietly();
-                      showToast("પ્રિન્ટર કનેક્ટ થઈ શક્યું નહીં. પ્રિન્ટર ચાલુ છે?");
+                      if (showToast) showToast("PSF588 કનેક્ટ થઈ શક્યું નહીં. પ્રિન્ટર ચાલુ છે?");
                       return false;
                   }
               }
@@ -273,7 +292,7 @@ jobs:
 
               private void printInternal(String base64Png, boolean isRetry) {
                   try {
-                      if (!ensureSocketConnected()) {
+                      if (!ensureSocketConnected(!isRetry)) {
                           return;
                       }
 
