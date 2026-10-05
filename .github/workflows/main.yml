@@ -46,8 +46,8 @@ jobs:
       - name: Install Dependencies
         run: npm install --legacy-peer-deps
 
-      - name: Build Web Bundle
-        run: npm run build
+      - name: Build Web Bundle with Relative Base
+        run: npx vite build --base="./"
 
       - name: Setup GitHub Pages Deployment
         uses: actions/configure-pages@v5
