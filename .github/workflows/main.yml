@@ -1,9 +1,14 @@
-name: Build Android APK
+name: Build Live Android APK & Deploy
 
 on:
   push:
     branches: [ "main" ]
   workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
 
 jobs:
   build:
@@ -41,13 +46,25 @@ jobs:
       - name: Install Dependencies
         run: npm install --legacy-peer-deps
 
-      - name: Build Web
+      - name: Build Web Bundle
         run: npm run build
+
+      - name: Setup GitHub Pages Deployment
+        uses: actions/configure-pages@v5
+
+      - name: Upload Web Artifact to Pages
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+      - name: Deploy Web to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
 
       - name: Install Capacitor
         run: npm install --save-dev @capacitor/cli @capacitor/core @capacitor/android @capacitor/app --legacy-peer-deps
 
-      - name: Configure Capacitor Live Sync
+      - name: Configure Capacitor with GitHub Pages
         run: |
           cat << 'CONF' > capacitor.config.json
           {
@@ -55,13 +72,13 @@ jobs:
             "appName": "Kharid Voucher",
             "webDir": "dist",
             "server": {
-              "url": "https://ais-pre-2l2vgmeymtyr6npijtpd76-34078812998.asia-southeast1.run.app",
+              "url": "https://jkapatel61-sudo.github.io/kharid-voucher/",
               "cleartext": true
             }
           }
           CONF
 
-      - name: Add Android
+      - name: Add Android Platform
         run: npx cap add android
 
       - name: Add Android Permissions
@@ -78,7 +95,7 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon
 
-      - name: Upload APK
+      - name: Upload APK File
         uses: actions/upload-artifact@v4
         with:
           name: kharid-voucher-debug-apk
