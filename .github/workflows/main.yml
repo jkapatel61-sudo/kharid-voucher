@@ -1,19 +1,16 @@
-name: Build Live Android APK & Deploy
+name: Build Android APK
 
 on:
   push:
     branches: [ "main" ]
   workflow_dispatch:
 
-permissions:
-  contents: read
-  pages: write
-  id-token: write
-
 jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: write
     env:
       ANDROID_HOME: /usr/local/lib/android/sdk
       ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
@@ -38,65 +35,461 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Install Android Platforms
+      - name: Install Android Platforms & Licenses
         run: |
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-34" "platforms;android-35" "build-tools;34.0.0" "build-tools;35.0.0" || true
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
 
-      - name: Install Dependencies
-        run: npm install --legacy-peer-deps
-
-      - name: Build Web Bundle with Relative Base
-        run: npx vite build --base="./"
-
-      - name: Setup GitHub Pages Deployment
-        uses: actions/configure-pages@v5
-
-      - name: Upload Web Artifact to Pages
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: dist
-
-      - name: Deploy Web to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
-
-      - name: Install Capacitor
-        run: npm install --save-dev @capacitor/cli @capacitor/core @capacitor/android @capacitor/app --legacy-peer-deps
-
-      - name: Configure Capacitor with GitHub Pages
+      - name: Install Project Dependencies
         run: |
-          cat << 'CONF' > capacitor.config.json
-          {
-            "appId": "com.kaleshwari.kharidvoucher",
-            "appName": "Kharid Voucher",
-            "webDir": "dist",
-            "server": {
-              "url": "https://jkapatel61-sudo.github.io/kharid-voucher/",
-              "cleartext": true
-            }
-          }
-          CONF
+          npm install --legacy-peer-deps
+
+      - name: Build Web Production Bundle
+        run: |
+          npm run build
 
       - name: Add Android Platform
-        run: npx cap add android
-
-      - name: Add Android Permissions
         run: |
-          sed -i '/<application/i \    <uses-permission android:name="android.permission.INTERNET" />\n    <uses-permission android:name="android.permission.RECORD_AUDIO" />\n    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />\n    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />\n    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />\n    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />' android/app/src/main/AndroidManifest.xml
-          sed -i 's/<application/<application android:usesCleartextTraffic="true"/' android/app/src/main/AndroidManifest.xml
+          if [ ! -d "android" ]; then
+            npx cap add android
+          fi
 
-      - name: Sync Android Assets
-        run: npx cap sync android
+      - name: Configure Native Android Bluetooth, Audio & App Permissions
+        run: |
+          # 1. Update AndroidManifest.xml
+          python3 - << 'PY'
+          manifest_path = "android/app/src/main/AndroidManifest.xml"
+          with open(manifest_path, "r", encoding="utf-8") as f:
+              content = f.read()
+
+          permissions = """
+              <uses-permission android:name="android.permission.INTERNET" />
+              <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+              <uses-permission android:name="android.permission.RECORD_AUDIO" />
+              <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+              <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+              <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+              <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
+              <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+              <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+              <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+              <uses-feature android:name="android.hardware.bluetooth" android:required="false" />
+              <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
+              <uses-feature android:name="android.hardware.microphone" android:required="false" />
+          """
+          if "android.permission.BLUETOOTH_CONNECT" not in content:
+              content = content.replace("<application", permissions + "\n    <application")
+          if 'android:usesCleartextTraffic="true"' not in content:
+              content = content.replace("<application", '<application android:usesCleartextTraffic="true" android:hardwareAccelerated="true"')
+          with open(manifest_path, "w", encoding="utf-8") as f:
+              f.write(content)
+          PY
+
+          # 2. Update styles.xml for Emerald 700 Notch Bar
+          python3 - << 'PY'
+          import os
+          styles_path = "android/app/src/main/res/values/styles.xml"
+          if os.path.exists(styles_path):
+              with open(styles_path, "r", encoding="utf-8") as f:
+                  content = f.read()
+              if "statusBarColor" not in content:
+                  content = content.replace("</style>", '    <item name="android:statusBarColor">#047857</item>\n        <item name="android:windowLightStatusBar">false</item>\n    </style>')
+                  with open(styles_path, "w", encoding="utf-8") as f:
+                      f.write(content)
+          PY
+
+          # 3. Create AndroidPrinterBridge.java
+          cat << 'JAVA' > android/app/src/main/java/com/kaleshwari/kharidvoucher/AndroidPrinterBridge.java
+          package com.kaleshwari.kharidvoucher;
+
+          import android.Manifest;
+          import android.bluetooth.BluetoothAdapter;
+          import android.bluetooth.BluetoothDevice;
+          import android.bluetooth.BluetoothSocket;
+          import android.content.Context;
+          import android.content.pm.PackageManager;
+          import android.graphics.Bitmap;
+          import android.graphics.BitmapFactory;
+          import android.os.Build;
+          import android.util.Base64;
+          import android.util.Log;
+          import android.webkit.JavascriptInterface;
+          import android.widget.Toast;
+          import androidx.core.app.ActivityCompat;
+          import androidx.core.content.ContextCompat;
+
+          import java.io.ByteArrayOutputStream;
+          import java.io.OutputStream;
+          import java.lang.reflect.Method;
+          import java.util.Set;
+          import java.util.UUID;
+
+          public class AndroidPrinterBridge {
+              private static final String TAG = "AndroidPrinterBridge";
+              private static final UUID SPP_UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB");
+              private final Context context;
+              private static final Object PRINT_LOCK = new Object();
+              private String preferredPrinterName = "PSF588";
+
+              public AndroidPrinterBridge(Context context) {
+                  this.context = context;
+              }
+
+              @JavascriptInterface
+              public void setPreferredPrinterName(String name) {
+                  if (name != null && !name.trim().isEmpty()) {
+                      this.preferredPrinterName = name.trim();
+                  }
+              }
+
+              @JavascriptInterface
+              public boolean isConnected() {
+                  return hasPairedPrinter();
+              }
+
+              @JavascriptInterface
+              public boolean hasPairedPrinter() {
+                  try {
+                      BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
+                      if (adapter == null || !adapter.isEnabled()) return false;
+                      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                          if (ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                              return false;
+                          }
+                      }
+                      Set<BluetoothDevice> pairedDevices = adapter.getBondedDevices();
+                      if (pairedDevices == null || pairedDevices.isEmpty()) return false;
+                      for (BluetoothDevice device : pairedDevices) {
+                          String name = device.getName() != null ? device.getName().toUpperCase() : "";
+                          if ((!preferredPrinterName.isEmpty() && name.contains(preferredPrinterName.toUpperCase()))
+                              || name.contains("PSF") || name.contains("PRINTER") || name.contains("POS")
+                              || name.contains("RPP") || name.contains("MPT") || name.contains("MTP")
+                              || name.contains("ESC") || name.contains("58") || name.contains("80")
+                              || name.contains("BLUETOOTH")) {
+                              return true;
+                          }
+                      }
+                      return !pairedDevices.isEmpty();
+                  } catch (Exception e) {
+                      return false;
+                  }
+              }
+
+              @JavascriptInterface
+              public void connect() {
+                  try {
+                      BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
+                      if (adapter == null) {
+                          showToast("આ ડિવાઇસમાં બ્લૂટૂથ સપોર્ટ નથી");
+                          return;
+                      }
+                      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                          if (ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                              if (context instanceof android.app.Activity) {
+                                  ActivityCompat.requestPermissions((android.app.Activity) context, new String[]{
+                                      Manifest.permission.BLUETOOTH_CONNECT,
+                                      Manifest.permission.BLUETOOTH_SCAN
+                                  }, 102);
+                                  showToast("કૃપા કરીને બ્લૂટૂથ પરમિશન Allow (મંજૂર) કરો");
+                                  return;
+                              }
+                          }
+                      }
+                      if (!adapter.isEnabled()) {
+                          showToast("કૃપા કરીને ફોનનું Bluetooth ચાલુ કરો");
+                          android.content.Intent enableIntent = new android.content.Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE);
+                          enableIntent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+                          context.startActivity(enableIntent);
+                          return;
+                      }
+                      if (!hasPairedPrinter()) {
+                          showToast("પ્રિન્ટર Pair કરેલું નથી. બ્લૂટૂથ સેટિંગ્સમાંથી " + preferredPrinterName + " Pair કરો");
+                          openBluetoothSettings();
+                      } else {
+                          showToast("પ્રિન્ટર તૈયાર છે! હવે સીધી પ્રિન્ટ થશે.");
+                      }
+                  } catch (Exception e) {
+                      Log.w(TAG, "Error in connect(): " + e.getMessage());
+                  }
+              }
+
+              @JavascriptInterface
+              public void openBluetoothSettings() {
+                  try {
+                      android.content.Intent intent = new android.content.Intent(android.provider.Settings.ACTION_BLUETOOTH_SETTINGS);
+                      intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+                      context.startActivity(intent);
+                  } catch (Exception e) {
+                      Log.e(TAG, "Cannot open BT settings: " + e.getMessage());
+                  }
+              }
+
+              @JavascriptInterface
+              public void print(final String base64Png) {
+                  new Thread(new Runnable() {
+                      @Override
+                      public void run() {
+                          synchronized (PRINT_LOCK) {
+                              printInternal(base64Png);
+                          }
+                      }
+                  }).start();
+              }
+
+              @JavascriptInterface
+              public String printSync(final String base64Png) {
+                  print(base64Png);
+                  return "OK";
+              }
+
+              private void printInternal(String base64Png) {
+                  BluetoothSocket socket = null;
+                  OutputStream out = null;
+                  try {
+                      BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
+                      if (adapter == null || !adapter.isEnabled()) {
+                          showToast("કૃપા કરીને બ્લૂટૂથ ચાલુ કરો");
+                          return;
+                      }
+                      Set<BluetoothDevice> pairedDevices = adapter.getBondedDevices();
+                      BluetoothDevice printerDevice = null;
+                      for (BluetoothDevice device : pairedDevices) {
+                          if (device.getName() != null && device.getName().toUpperCase().contains("PSF588")) {
+                              printerDevice = device;
+                              break;
+                          }
+                      }
+                      if (printerDevice == null) {
+                          for (BluetoothDevice device : pairedDevices) {
+                              String name = device.getName() != null ? device.getName().toUpperCase() : "";
+                              if (name.contains("PRINTER") || name.contains("POS") || name.contains("RPP") || name.contains("MPT") || name.contains("BLUETOOTH")) {
+                                  printerDevice = device;
+                                  break;
+                              }
+                          }
+                      }
+                      if (printerDevice == null && !pairedDevices.isEmpty()) {
+                          printerDevice = pairedDevices.iterator().next();
+                      }
+                      if (printerDevice == null) {
+                          showToast("મોબાઇલ સેટિંગ્સમાંથી PSF588 બ્લૂટૂથ પેર કરો");
+                          return;
+                      }
+
+                      byte[] decoded = Base64.decode(base64Png, Base64.DEFAULT);
+                      Bitmap bitmap = BitmapFactory.decodeByteArray(decoded, 0, decoded.length);
+                      if (bitmap == null) return;
+
+                      if (adapter.isDiscovering()) {
+                          adapter.cancelDiscovery();
+                      }
+
+                      try {
+                          socket = printerDevice.createRfcommSocketToServiceRecord(SPP_UUID);
+                          socket.connect();
+                      } catch (Exception e1) {
+                          Method m = printerDevice.getClass().getMethod("createRfcommSocket", new Class[] {int.class});
+                          socket = (BluetoothSocket) m.invoke(printerDevice, 1);
+                          socket.connect();
+                      }
+
+                      out = socket.getOutputStream();
+                      Thread.sleep(120);
+
+                      out.write(new byte[]{0x18});
+                      out.write(new byte[]{0x1B, 0x61, 0x01});
+                      out.flush();
+
+                      byte[] raster = bitmapToEscPosRaster(bitmap);
+                      int PREROLL_BYTES = Math.min(raster.length, 1152);
+                      if (PREROLL_BYTES > 0) {
+                          out.write(raster, 0, PREROLL_BYTES);
+                          out.flush();
+                      }
+
+                      int BATCH_BYTES = 384;
+                      for (int offset = PREROLL_BYTES; offset < raster.length; offset += BATCH_BYTES) {
+                          int len = Math.min(BATCH_BYTES, raster.length - offset);
+                          out.write(raster, offset, len);
+                          out.flush();
+                          Thread.sleep(7);
+                      }
+
+                      out.write(new byte[]{0x1B, 0x64, 0x01, 0x0A});
+                      out.flush();
+
+                      Thread.sleep(500);
+                      showToast("પ્રિન્ટ સફળ!");
+                  } catch (Exception e) {
+                      Log.e(TAG, "Print error", e);
+                      showToast("પ્રિન્ટરમાં એરર: " + (e.getMessage() != null ? e.getMessage() : "કનેક્શન નિષ્ફળ"));
+                  } finally {
+                      try {
+                          if (out != null) { out.flush(); out.close(); }
+                      } catch (Exception ignored) {}
+                      try {
+                          if (socket != null) { socket.close(); }
+                      } catch (Exception ignored) {}
+                  }
+              }
+
+              private byte[] bitmapToEscPosRaster(Bitmap bitmap) {
+                  int width = bitmap.getWidth();
+                  int height = bitmap.getHeight();
+                  int widthBytes = (width + 7) / 8;
+                  ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                  baos.write(0x1D);
+                  baos.write(0x76);
+                  baos.write(0x30);
+                  baos.write(0x00);
+                  baos.write(widthBytes & 0xFF);
+                  baos.write((widthBytes >> 8) & 0xFF);
+                  baos.write(height & 0xFF);
+                  baos.write((height >> 8) & 0xFF);
+
+                  for (int y = 0; y < height; y++) {
+                      for (int x = 0; x < widthBytes; x++) {
+                          byte b = 0;
+                          for (int bit = 0; bit < 8; bit++) {
+                              int px = (x * 8) + bit;
+                              if (px < width) {
+                                  int pixel = bitmap.getPixel(px, y);
+                                  int r = (pixel >> 16) & 0xFF;
+                                  int g = (pixel >> 8) & 0xFF;
+                                  int bl = pixel & 0xFF;
+                                  int luminance = (r * 299 + g * 587 + bl * 114) / 1000;
+                                  if (luminance < 170) {
+                                      b |= (1 << (7 - bit));
+                                  }
+                              }
+                          }
+                          baos.write(b);
+                      }
+                  }
+                  return baos.toByteArray();
+              }
+
+              private void showToast(final String msg) {
+                  if (context == null) return;
+                  new android.os.Handler(android.os.Looper.getMainLooper()).post(new Runnable() {
+                      @Override
+                      public void run() {
+                          Toast.makeText(context, msg, Toast.LENGTH_SHORT).show();
+                      }
+                  });
+              }
+          }
+          JAVA
+
+          # 4. Update MainActivity.java
+          cat << 'JAVA' > android/app/src/main/java/com/kaleshwari/kharidvoucher/MainActivity.java
+          package com.kaleshwari.kharidvoucher;
+
+          import android.Manifest;
+          import android.content.pm.PackageManager;
+          import android.os.Build;
+          import android.os.Bundle;
+          import android.webkit.PermissionRequest;
+          import android.webkit.WebChromeClient;
+          import androidx.core.app.ActivityCompat;
+          import androidx.core.content.ContextCompat;
+          import com.getcapacitor.BridgeActivity;
+
+          public class MainActivity extends BridgeActivity {
+              private static final int PERMISSION_REQ_CODE = 101;
+
+              @Override
+              public void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+                  requestAppPermissions();
+                  setupWebViewBridge();
+              }
+
+              private void requestAppPermissions() {
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                      String[] permissions = {
+                          Manifest.permission.RECORD_AUDIO,
+                          Manifest.permission.BLUETOOTH_CONNECT,
+                          Manifest.permission.BLUETOOTH_SCAN,
+                          Manifest.permission.ACCESS_FINE_LOCATION
+                      };
+                      ActivityCompat.requestPermissions(this, permissions, PERMISSION_REQ_CODE);
+                  } else {
+                      String[] permissions = {
+                          Manifest.permission.RECORD_AUDIO,
+                          Manifest.permission.ACCESS_FINE_LOCATION
+                      };
+                      ActivityCompat.requestPermissions(this, permissions, PERMISSION_REQ_CODE);
+                  }
+              }
+
+              @Override
+              public void onStart() {
+                  super.onStart();
+                  setupWebViewBridge();
+              }
+
+              @Override
+              public void onResume() {
+                  super.onResume();
+                  setupWebViewBridge();
+              }
+
+              private void setupWebViewBridge() {
+                  if (this.bridge != null && this.bridge.getWebView() != null) {
+                      this.bridge.getWebView().addJavascriptInterface(new AndroidPrinterBridge(this), "AndroidPrinter");
+                      try {
+                          this.bridge.getWebView().setWebChromeClient(new com.getcapacitor.BridgeWebChromeClient(this.bridge) {
+                              @Override
+                              public void onPermissionRequest(final PermissionRequest request) {
+                                  request.grant(request.getResources());
+                              }
+                          });
+                      } catch (Exception ignored) {}
+                  }
+              }
+          }
+          JAVA
+
+      - name: Sync Web Assets to Android
+        run: |
+          npx cap sync android
 
       - name: Build Debug APK
         run: |
           cd android
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon
+          ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: Prepare Named APK Files
+        run: |
+          mkdir -p output_apk
+          cp android/app/build/outputs/apk/debug/app-debug.apk output_apk/KharidVoucher.apk
+          cp android/app/build/outputs/apk/debug/app-debug.apk output_apk/KharidVoucher-v1.0.apk
 
       - name: Upload APK File
         uses: actions/upload-artifact@v4
         with:
-          name: kharid-voucher-debug-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          name: KharidVoucher-APK
+          path: output_apk/KharidVoucher.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Create GitHub Release with APK Download
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        continue-on-error: true
+        with:
+          tag_name: v1.0.0-${{ github.run_number }}
+          name: Kharid Voucher Mobile APK v1.0.0 (Build ${{ github.run_number }})
+          body: |
+            ### 📱 શ્રી કલેશ્વરી કૃપા - ખરીદ વાઉચર Android APK
+            - **ફાઇલ:** `KharidVoucher.apk`
+            - **ઝડપી થર્મલ પ્રિન્ટ:** PSF588 Bluetooth ESC/POS
+            - **કેમેરા નોચ ફિક્સ:** Status bar Emerald 700
+          files: |
+            output_apk/KharidVoucher.apk
+            output_apk/KharidVoucher-v1.0.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
