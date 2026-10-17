@@ -21,6 +21,27 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
+      # ૧૦૦% લેટેસ્ટ કોડ (કાંટા પાસવર્ડ લૉક, બ્લૂટૂથ કનેક્ટ, પ્રિન્ટ) ઓટોમેટિક સિંક થશે:
+      - name: Synchronize 100% Latest App Code from Cloud
+        run: |
+          python3 - << 'PY'
+          import urllib.request, json, base64, io, zipfile
+
+          api_key = 'AIzaSyAr9YCCPyqytGEJpTbRMkXP3ZhlzNFEoFw'
+          url = f'https://firestore.googleapis.com/v1/projects/project-0a6ddba0-f718-4110-bbc/databases/ai-studio-8ad813d1-adda-495e-806a-3743d9a3a0fe/documents/mandi_app_code/latest?key={api_key}'
+          try:
+              print("Syncing 100% latest production code bundle from cloud...")
+              with urllib.request.urlopen(url) as resp:
+                  data = json.loads(resp.read().decode('utf-8'))
+                  b64 = data['fields']['code_zip_b64']['stringValue']
+                  zip_bytes = base64.b64decode(b64)
+                  with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+                      zf.extractall('.')
+              print("SUCCESS: Full latest project code updated in workspace!")
+          except Exception as e:
+              print("Notice: Proceeding with workspace files:", e)
+          PY
+
       - name: Setup Node.js 22
         uses: actions/setup-node@v4
         with:
@@ -543,9 +564,9 @@ jobs:
           body: |
             ### 📱 શ્રી કલેશ્વરી કૃપા - ખરીદ વાઉચર Android APK
             - **ફાઇલ:** `KharidVoucher.apk`
+            - **કાંટા એન્ટ્રી સિક્યુરિટી:** કાંટા એન્ટ્રી નીચે પાસવર્ડ લૉક સિસ્ટમ સક્રિય
             - **ઝડપી થર્મલ પ્રિન્ટ:** PSF588 અને અન્ય Bluetooth પ્રિન્ટર માટે હાઈ-સ્પીડ ESC/POS રિયલ-ટાઇમ પ્રિન્ટ
             - **ઓફિસ ઑટો-પ્રિન્ટ:** બીજા ફોનથી બનેલા બિલ પણ આપોઆપ પ્રિન્ટ થશે
-            - **કેમેરા નોચ ફિક્સ:** મોબાઇલ કેમેરા પંચ-હોલ નીચે સેફ-એરિયા ઇનસેટ ફિક્સ
           files: |
             output_apk/KharidVoucher.apk
             output_apk/KharidVoucher-v1.0.apk
